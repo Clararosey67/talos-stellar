@@ -19,7 +19,7 @@ jobs:
           node-version: '20'
 
       - name: Install pnpm
-        run: corepack enable && corepack prepare pnpm@9 --activate
+        run: corepack enable && corepack prepare pnpm@10 --activate
 
       - name: Install dependencies
         working-directory: web
@@ -38,6 +38,11 @@ jobs:
           # pnpm db:migrate
           # pnpm db:seed-demo
           echo "Mocking migration and seed..."
+
+      - name: Cleanup Environment on Failure
+        if: failure()
+        working-directory: web
+        run: pnpm env:cleanup ${{ github.event.pull_request.number }}
 
       - name: Comment on PR
         uses: actions/github-script@v7

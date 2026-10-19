@@ -15,12 +15,23 @@ from talos_agent.adapters.health import (
     AdapterState,
     BrowserSessionProbe,
     DiscordProbe,
+    ErrorCategory,
     HealthReport,
     ProbeResult,
+    StellarPaymentProbe,
     TelegramProbe,
+    X402PaymentProbe,
     XProbe,
 )
 from talos_agent.adapters.registry import AdapterRegistry
+from talos_agent.adapters.snapshots import (
+    AdapterHealthSnapshot,
+    DiscordHealthSnapshot,
+    StellarHealthSnapshot,
+    TelegramHealthSnapshot,
+    X402HealthSnapshot,
+    XHealthSnapshot,
+)
 from talos_agent.adapters.telegram import TelegramAdapter  # noqa: F401
 from talos_agent.adapters.storage import (
     BaseStorageAdapter,
@@ -50,14 +61,24 @@ __all__ = [
     "XAdapterConfig",
     # Health probes
     "AdapterState",
+    "ErrorCategory",
     "ProbeResult",
     "AdapterProbe",
     "DiscordProbe",
     "TelegramProbe",
     "XProbe",
     "BrowserSessionProbe",
+    "StellarPaymentProbe",
+    "X402PaymentProbe",
     "HealthReport",
     "AdapterHealthReporter",
+    # Typed adapter health snapshots
+    "AdapterHealthSnapshot",
+    "DiscordHealthSnapshot",
+    "TelegramHealthSnapshot",
+    "XHealthSnapshot",
+    "StellarHealthSnapshot",
+    "X402HealthSnapshot",
     # Storage adapters and coordinator
     "BaseStorageAdapter",
     "LocalStorageAdapter",

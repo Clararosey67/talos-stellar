@@ -21,7 +21,8 @@ import {
   tlsWebhookSubscriptions,
   tlsWebhookDeliveries,
 } from "@/db/schema";
-import { decryptSecret, signPayload } from "./signing";
+import { signPayload } from "./signing";
+import { resolveSigningSecrets } from "./rotation";
 import {
   BACKOFF_BASE_MS,
   BACKOFF_MAX_MS,
@@ -31,6 +32,7 @@ import {
   MAX_PAYLOAD_BYTES,
 } from "./config";
 import { isWebhookDeliveryEnabled } from "./config";
+import { safeFetch } from "@/lib/security/ssrf";
 
 // ─── Types ───────────────────────────────────────────────────────
 
@@ -214,10 +216,11 @@ export async function attemptDelivery(
   // If the prefix doesn't yield valid JSON, we return a minimal event stub.
   const payloadJson = reconstructPayload(claimed.payloadHash);
 
-  // Decrypt the secret
-  let secret: string;
+  // Decrypt current (+ previous if rotation grace is active) and dual-sign
+  let signature: string;
   try {
-    secret = decryptSecret(subscription.secretCiphertext);
+    const { secrets, signatureVersion } = resolveSigningSecrets(subscription);
+    signature = signPayload(payloadJson, secrets, signatureVersion);
   } catch (err) {
     logger.error(
       { deliveryId, subscriptionId: subscription.id, err },
@@ -226,9 +229,6 @@ export async function attemptDelivery(
     await markDeliveryFailed(deliveryId, "secret_decrypt_failed", claimed.fencingToken);
     return null;
   }
-
-  // Sign the payload
-  const signature = signPayload(payloadJson, secret, subscription.signatureVersion);
 
   // Perform the HTTP delivery
   const startTime = Date.now();
@@ -240,7 +240,7 @@ export async function attemptDelivery(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), DELIVERY_TIMEOUT_MS);
 
-    const response = await fetch(subscription.url, {
+    const response = await safeFetch(subscription.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -4,6 +4,7 @@
  */
 import { z } from "zod/v4";
 import { StrKey } from "@stellar/stellar-sdk";
+import { errorResponse } from "./api-response";
 
 export const stellarAssetCodeSchema = z
   .string()
@@ -29,15 +30,19 @@ export const stellarPublicKeySchema = z
     { message: "Invalid Stellar Ed25519 public key" },
   );
 
-export const stellarNativeAssetSchema = z.object({
-  type: z.literal("native"),
-}).strict();
+export const stellarNativeAssetSchema = z
+  .object({
+    type: z.literal("native"),
+  })
+  .strict();
 
-export const stellarIssuedAssetSchema = z.object({
-  type: z.literal("issued"),
-  code: stellarAssetCodeSchema,
-  issuer: stellarPublicKeySchema,
-}).strict();
+export const stellarIssuedAssetSchema = z
+  .object({
+    type: z.literal("issued"),
+    code: stellarAssetCodeSchema,
+    issuer: stellarPublicKeySchema,
+  })
+  .strict();
 
 export const stellarDiscriminatedAssetSchema = z.discriminatedUnion("type", [
   stellarNativeAssetSchema,
@@ -82,7 +87,8 @@ const CRC16_TABLE = (() => {
 
 function crc16(bytes: Uint8Array): number {
   let crc = 0;
-  for (const b of bytes) crc = ((crc << 8) ^ CRC16_TABLE[((crc >>> 8) ^ b) & 0xff]) & 0xffff;
+  for (const b of bytes)
+    crc = ((crc << 8) ^ CRC16_TABLE[((crc >>> 8) ^ b) & 0xff]) & 0xffff;
   return crc;
 }
 
@@ -147,9 +153,13 @@ export const stellarAssetSchema = z.union([
       .string()
       .min(1, "Asset code is required for issued assets")
       .max(12, "Asset code must be at most 12 characters")
-      .regex(/^[A-Z0-9]{1,12}$/, "Asset code must be 1-12 uppercase alphanumeric characters"),
+      .regex(
+        /^[A-Z0-9]{1,12}$/,
+        "Asset code must be 1-12 uppercase alphanumeric characters",
+      ),
     issuer: z.string().refine(isValidStellarPublicKey, {
-      message: "Issuer must be a valid Stellar public key (G..., 56 chars, valid checksum)",
+      message:
+        "Issuer must be a valid Stellar public key (G..., 56 chars, valid checksum)",
     }),
   }),
 ]);
@@ -167,16 +177,32 @@ export const optionalStellarAssetField = stellarAssetSchema.optional();
 // ── Categories ───────────────────────────────────────────────────────────────
 
 export const VALID_CATEGORIES = [
-  "Marketing", "Development", "Research", "Design", "Finance",
-  "Analytics", "Operations", "Sales", "Support", "Education",
+  "Marketing",
+  "Development",
+  "Research",
+  "Design",
+  "Finance",
+  "Analytics",
+  "Operations",
+  "Sales",
+  "Support",
+  "Education",
 ] as const;
 
 const VALID_ACTIVITY_TYPES = [
-  "post", "research", "reply", "engagement", "commerce", "approval",
+  "post",
+  "research",
+  "reply",
+  "engagement",
+  "commerce",
+  "approval",
 ] as const;
 
 const VALID_APPROVAL_TYPES = [
-  "transaction", "strategy", "policy", "channel",
+  "transaction",
+  "strategy",
+  "policy",
+  "channel",
 ] as const;
 
 // --- TALOS ---
@@ -185,7 +211,13 @@ export const createTalosSchema = z.object({
   name: z.string().min(1).max(100),
   category: z.enum(VALID_CATEGORIES),
   description: z.string().min(1).max(2000),
-  totalSupply: z.number().int().positive().max(100_000_000).optional().default(1_000_000),
+  totalSupply: z
+    .number()
+    .int()
+    .positive()
+    .max(100_000_000)
+    .optional()
+    .default(1_000_000),
   persona: z.string().max(2000).optional(),
   targetAudience: z.string().max(2000).optional(),
   channels: z.array(z.string()).optional().default([]),
@@ -200,15 +232,22 @@ export const createTalosSchema = z.object({
   agentName: z.string().max(100).nullable().optional(),
   initialPrice: z.number().nonnegative().optional().default(0),
   minPatronPulse: z.number().int().nonnegative().nullable().optional(),
-  stellarAssetCode: z.string().nullable().optional().refine(
-    (val) => {
-      if (val === null || val === undefined || val === "") return true;
-      const match = val.match(/^([A-Z0-9]{1,12}):(.+)$/);
-      if (!match) return false;
-      return isValidStellarPublicKey(match[2]);
-    },
-    { message: "stellarAssetCode must be null or in the format 'CODE:G...55chars' with a valid issuer checksum (e.g. 'MITOS:GABC...')" },
-  ),
+  stellarAssetCode: z
+    .string()
+    .nullable()
+    .optional()
+    .refine(
+      (val) => {
+        if (val === null || val === undefined || val === "") return true;
+        const match = val.match(/^([A-Z0-9]{1,12}):(.+)$/);
+        if (!match) return false;
+        return isValidStellarPublicKey(match[2]);
+      },
+      {
+        message:
+          "stellarAssetCode must be null or in the format 'CODE:G...55chars' with a valid issuer checksum (e.g. 'MITOS:GABC...')",
+      },
+    ),
   tokenSymbol: z.string().max(20).nullable().optional(),
   serviceName: z.string().min(1).max(200).optional(),
   serviceDescription: z.string().max(2000).optional(),
@@ -243,11 +282,45 @@ export const decideApprovalSchema = z.object({
 
 // --- Transfer (Stellar USDC) ---
 
-export const transferSchema = z.object({
-  to: z.string().min(1),     // Stellar public key (G...)
-  amount: z.number().positive(),
-  currency: z.string().optional().default("USDC"),
-});
+const canonicalTransferAmountSchema = z
+  .string()
+  .regex(
+    /^(?:0|[1-9][0-9]{0,11})\.[0-9]{2}$/,
+    "amount must use canonical decimal notation with exactly two fractional digits",
+  )
+  .refine((amount) => amount !== "0.00", "amount must be greater than zero")
+  .refine(
+    (amount) => {
+      // Compare textually so validation never rounds a protocol amount through
+      // JavaScript's floating-point number representation.
+      const [whole, fraction] = amount.split(".");
+      if (whole.length < 12) return true;
+      if (whole < "922337203685") return true;
+      return whole === "922337203685" && fraction <= "47";
+    },
+    "amount exceeds the Stellar maximum",
+  );
+
+export const transferSchema = z
+  .object({
+    // These exact values form the canonical signed transfer payload.
+    agent: z.string().min(1).max(128),
+    destination: z
+      .string()
+      .regex(/^G[A-Z2-7]{55}$/, "destination must be a canonical Stellar G-address"),
+    asset: z.literal("USDC"),
+    amount: canonicalTransferAmountSchema,
+    nonce: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, "nonce must be 32 bytes encoded as lowercase hexadecimal"),
+    expiry: z
+      .string()
+      .regex(/^[1-9][0-9]{9,12}$/, "expiry must be Unix seconds in canonical decimal notation"),
+    signature: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/, "signature must be a lowercase hexadecimal HMAC-SHA256 digest"),
+  })
+  .strict();
 
 // --- Patrons ---
 
@@ -294,7 +367,12 @@ export const crossChainWebhookSchema = z.object({
 
 // Full set of statuses used internally / by the server
 export const VALID_BID_STATUSES = [
-  "pending", "negotiating", "accepted", "counter_offer", "rejected", "completed",
+  "pending",
+  "negotiating",
+  "accepted",
+  "counter_offer",
+  "rejected",
+  "completed",
 ] as const;
 
 // Only these statuses may be submitted by a client in a bid payload.
@@ -334,7 +412,10 @@ export const recordDividendSchema = z.object({
   source: z.string().max(50).optional().default("revenue-share"),
   txHash: z.string().nullable().optional(),
   breakdown: z.array(dividendBreakdownEntrySchema).optional(),
-  status: z.enum(["completed", "pending", "failed"]).optional().default("completed"),
+  status: z
+    .enum(["completed", "pending", "failed"])
+    .optional()
+    .default("completed"),
 });
 
 // --- Status ---
@@ -373,15 +454,17 @@ export const deleteAgentSchema = z.object({
 // --- Sign Payment (Stellar x402) ---
 
 export const signPaymentSchema = z.object({
-  payee: z.string().min(1),
+  payee: z.string().min(1), // Stellar public key of payee
   amount: z.union([z.string(), z.number()]),
   assetCode: stellarAssetCodeSchema.optional().default("USDC"),
+  // Typed asset; when present its code takes precedence over assetCode.
+  asset: optionalStellarAssetField,
 });
 
 // --- Buy Token ---
 
 export const buyTokenSchema = z.object({
-  buyerPublicKey: z.string().min(1),     // Stellar public key
+  buyerPublicKey: z.string().min(1), // Stellar public key
   amount: z.number().positive(),
 });
 
@@ -405,9 +488,16 @@ export const createPlaybookSchema = z.object({
 // --- API Key Management ---
 
 const VALID_SCOPE_VALUES = [
-  "admin", "activity:write", "commerce:read", "commerce:write",
-  "wallet:read", "wallet:sign", "settings:read", "settings:write",
-  "revenue:read", "revenue:write",
+  "admin",
+  "activity:write",
+  "commerce:read",
+  "commerce:write",
+  "wallet:read",
+  "wallet:sign",
+  "settings:read",
+  "settings:write",
+  "revenue:read",
+  "revenue:write",
 ] as const;
 
 export const createApiKeySchema = z.object({
@@ -422,30 +512,216 @@ export const updateApiKeySchema = z.object({
   expiresAt: z.string().datetime().nullable().optional(),
 });
 
+
+// --- Commerce job lease / progress ---
+
+export const claimJobSchema = z.object({
+  ttlSeconds: z.number().int().positive().max(3600).optional(),
+});
+
+export const heartbeatJobSchema = z.object({
+  fencingToken: z.number().int().nonnegative(),
+});
+
+export const releaseJobSchema = z.object({
+  fencingToken: z.number().int().nonnegative(),
+});
+
+export const extendLeaseSchema = z.object({
+  fencingToken: z.number().int().nonnegative(),
+  extendSeconds: z.number().int().min(1).max(3600),
+});
+
+export const submitJobResultSchema = z.object({
+  result: z.record(z.string(), z.unknown()),
+  fencingToken: z.number().int().nonnegative().optional(),
+});
+
+export const reportJobProgressSchema = z.object({
+  percent: z.number().min(0).max(100).optional(),
+  stage: z.string().min(1).max(64).optional(),
+  message: z.string().min(1).max(280).optional(),
+  fencingToken: z.number().int().nonnegative().optional(),
+});
+
 /**
- * Parse and validate request body with a Zod schema.
- * Returns { data, error } — if error is set, return it as the Response.
+ * Maximum request body size accepted by all public write routes (bytes).
  *
- * Error responses use the standardised envelope from @/lib/api-response
- * so callers never need to import that module separately.
+ * The default is 100 KB. This cap is enforced before JSON.parse() so oversized
+ * payloads are rejected with HTTP 413 without ever buffering or echoing request
+ * data. Override at deploy time with the BODY_LIMIT_BYTES environment variable:
+ *
+ *   BODY_LIMIT_BYTES=51200   # 50 KB
+ *
+ * Contract:
+ *   - positive integer only; invalid or empty values fall back to the default
+ *   - a request is rejected if either the declared Content-Length or the actual
+ *     byte length exceeds the limit
+ *   - the response body is a safe error object: { error: "Payload Too Large" }
+ */
+export const BODY_LIMIT_BYTES: number = (() => {
+  const env = process.env.BODY_LIMIT_BYTES;
+  if (env) {
+    const parsed = parseInt(env, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 102_400; // 100 KB safe default
+})();
+
+/**
+ * Soft caps on JSON graph shape (after the byte-size gate).
+ * Prevents nested / wide payloads that fit under BODY_LIMIT_BYTES from
+ * burning CPU in Zod walks. Tuned for fuzz + production write routes.
+ */
+export const MAX_JSON_DEPTH = 32;
+export const MAX_JSON_KEYS = 1_024;
+
+const SENSITIVE_ISSUE_SEGMENTS = new Set([
+  "signature",
+  "apikey",
+  "authorization",
+  "paymentproof",
+  "seed",
+  "secret",
+  "privatekey",
+  "password",
+  "token",
+]);
+
+/** Shared 413 response — body content is never echoed. */
+const payloadTooLarge = (request: Request) =>
+  errorResponse(request, 413, "PAYLOAD_TOO_LARGE", "Payload too large");
+
+/** Shared 400 response for over-complex JSON graphs. */
+const payloadTooComplex = (request: Request) =>
+  errorResponse(
+    request,
+    400,
+    "PAYLOAD_TOO_COMPLEX",
+    "JSON payload exceeds allowed depth or key count",
+  );
+
+/**
+ * Walk a parsed JSON value and reject graphs that are too deep or too wide.
+ * Returns false when the payload should be refused at the request boundary.
+ */
+export function isJsonComplexityAcceptable(
+  value: unknown,
+  maxDepth = MAX_JSON_DEPTH,
+  maxKeys = MAX_JSON_KEYS,
+): boolean {
+  let keyCount = 0;
+
+  const walk = (node: unknown, depth: number): boolean => {
+    if (depth > maxDepth) return false;
+    if (node === null || typeof node !== "object") return true;
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (!walk(item, depth + 1)) return false;
+      }
+      return true;
+    }
+
+    for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+      keyCount += 1;
+      if (keyCount > maxKeys) return false;
+      // Sensitive key names are fine structurally; values are redacted later.
+      void key;
+      if (!walk(child, depth + 1)) return false;
+    }
+    return true;
+  };
+
+  return walk(value, 0);
+}
+
+/**
+ * Privacy-safe Zod issue formatting for the request boundary.
+ *
+ * Paths that touch secrets (signature, seed, paymentProof, …) never include
+ * the received value — only a generic reason — so fuzz or attacker-controlled
+ * secrets cannot leak through the error envelope.
+ */
+export function formatValidationIssues(
+  issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>,
+): string[] {
+  return issues.map((issue) => {
+    const pathParts = issue.path.map(String);
+    const path = pathParts.join(".");
+    const sensitive = pathParts.some((p) =>
+      SENSITIVE_ISSUE_SEGMENTS.has(p.toLowerCase()),
+    );
+    if (sensitive) {
+      return path
+        ? `${path}: invalid or missing sensitive field`
+        : "invalid or missing sensitive field";
+    }
+    return path ? `${path}: ${issue.message}` : issue.message;
+  });
+}
+
+/**
+ * Parse and validate a JSON request body with a Zod schema.
+ *
+ * Contract:
+ *   - rejects requests exceeding BODY_LIMIT_BYTES via Content-Length before
+ *     reading the body stream
+ *   - rejects requests whose measured byte length exceeds BODY_LIMIT_BYTES when
+ *     the client omits Content-Length or sends a mismatched value
+ *   - rejects over-deep / over-wide JSON graphs with PAYLOAD_TOO_COMPLEX
+ *   - returns HTTP 400 for invalid JSON and schema validation failures
+ *   - validation issue strings never echo secrets, seeds, or payment proofs
+ *   - returns { data } for valid payloads; { error: Response } otherwise
  */
 export async function parseBody<T extends z.ZodType>(
   request: Request,
   schema: T,
-): Promise<{ data: z.infer<T>; error?: undefined } | { data?: undefined; error: Response }> {
-  const { invalidJson, validationError } = await import("@/lib/api-response");
+): Promise<
+  | { data: z.infer<T>; error?: undefined }
+  | { data?: undefined; error: Response }
+> {
+  // ── 1. Fast path: trust Content-Length if present ──────────────────
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = parseInt(contentLength, 10);
+    if (Number.isFinite(declared) && declared > BODY_LIMIT_BYTES) {
+      return { error: payloadTooLarge(request) };
+    }
+  }
 
+  // ── 2. Stream the body and measure actual bytes ─────────────────────
   let raw: unknown;
   try {
-    raw = await request.json();
+    const bytes = await request.arrayBuffer();
+    if (bytes.byteLength > BODY_LIMIT_BYTES) {
+      return { error: payloadTooLarge(request) };
+    }
+    const text = new TextDecoder().decode(bytes);
+    raw = JSON.parse(text);
   } catch {
-    return { error: invalidJson(request) };
+    return {
+      error: errorResponse(request, 400, "INVALID_JSON", "Invalid JSON body"),
+    };
+  }
+
+  // ── 3. Fuzz / DoS shape gate before Zod walks the graph ─────────────
+  if (!isJsonComplexityAcceptable(raw)) {
+    return { error: payloadTooComplex(request) };
   }
 
   const result = schema.safeParse(raw);
   if (!result.success) {
-    const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
-    return { error: validationError(request, issues) };
+    const issues = formatValidationIssues(result.error.issues);
+    return {
+      error: errorResponse(
+        request,
+        400,
+        "VALIDATION_ERROR",
+        "Validation failed",
+        issues,
+      ),
+    };
   }
 
   return { data: result.data };
